@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import json
+import pytz
+import uuid
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -16,27 +18,30 @@ def get_gsheet_connection():
     return sheet
 
 # --- Load & Process Log Data ---
-def load_log_df(sheet, show_debug=False):
+def load_log_df(sheet):
     df = pd.DataFrame(sheet.get_all_records())
     df.columns = df.columns.str.strip()
-
+    
     if not df.empty:
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True).dt.tz_convert("America/Chicago")
+        df["Total Hours Today"] = pd.to_numeric(df.get("Total Hours Today", 0), errors="coerce").fillna(0)
+        df["Total Hours This Week"] = pd.to_numeric(df.get("Total Hours This Week", 0), errors="coerce").fillna(0)
 
-    if show_debug:
-        st.write("🔍 DEBUG - Columns in Sheet:", df.columns.tolist())
-
+    unique_key = f"debug_checkbox_{uuid.uuid4()}"
+    if st.sidebar.checkbox("🔍 Developer Mode", key=unique_key):
+        st.write("🛠 Columns in Sheet:", df.columns.tolist())
+    
     return df
 
 # --- Calculate total hours for today ---
 def get_today_hours(df, name):
-    today = datetime.now().date()
+    today = datetime.now(pytz.timezone("America/Chicago")).date()
     logs = df[(df["Name"] == name) & (df["Timestamp"].dt.date == today)]
     return calculate_total_hours(logs)
 
 # --- Calculate total hours for the week ---
 def get_week_hours(df, name):
-    today = datetime.now()
+    today = datetime.now(pytz.timezone("America/Chicago"))
     start_of_week = today - timedelta(days=today.weekday())
     logs = df[(df["Name"] == name) & (df["Timestamp"].dt.date >= start_of_week.date())]
     return calculate_total_hours(logs)
@@ -58,19 +63,15 @@ def log_time_to_sheet(name, role, action):
     sheet = get_gsheet_connection()
     df = load_log_df(sheet)
 
-    now = datetime.now()
+    now = datetime.now(pytz.timezone("America/Chicago"))
     today_hours = get_today_hours(df, name)
     week_hours = get_week_hours(df, name)
 
     row = [name, role, action, now.strftime("%Y-%m-%d %H:%M:%S"), today_hours, week_hours]
     sheet.append_row(row)
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Froomira Time Tracker", layout="centered")
+# --- UI ---
 st.title("🕒 Froomira Time Tracker")
-
-# Developer checkbox only defined once
-show_debug = st.sidebar.checkbox("🔍 Developer Mode")
 
 name = st.selectbox("Select your name", ["Suchi", "Dharshine", "Other"])
 if name == "Other":
@@ -81,12 +82,10 @@ role = st.selectbox("Select your role", ["Intern", "Store Worker", "Other"])
 if name:
     st.write(f"Hello, **{name}** 👋")
 
-    # Load data once
     sheet = get_gsheet_connection()
-    df_logs = load_log_df(sheet, show_debug)
+    df_logs = load_log_df(sheet)
     user_logs = df_logs[df_logs["Name"] == name].sort_values("Timestamp", ascending=False)
 
-    # Show last Clock In/Out
     last_in = user_logs[user_logs["Action"].str.strip() == "Clock In"]["Timestamp"].max()
     last_out = user_logs[user_logs["Action"].str.strip() == "Clock Out"]["Timestamp"].max()
 
@@ -95,7 +94,6 @@ if name:
     if pd.notna(last_out):
         st.warning(f"🔴 Last Clock Out: `{last_out.strftime('%Y-%m-%d %H:%M:%S')}`")
 
-    # Clock In / Out buttons
     if st.button("✅ Clock In"):
         log_time_to_sheet(name, role, "Clock In")
         st.success("✅ Clock In recorded!")
@@ -104,21 +102,23 @@ if name:
         log_time_to_sheet(name, role, "Clock Out")
         st.success("🔴 Clock Out recorded!")
 
-    # Refresh logs and show totals
-    df_logs = load_log_df(sheet, show_debug)
+    df_logs = load_log_df(sheet)
     today_total = get_today_hours(df_logs, name)
     week_total = get_week_hours(df_logs, name)
 
     st.markdown(f"### 📅 Total Hours Today: `{today_total}`")
     st.markdown(f"### 📈 Total Hours This Week: `{week_total}`")
 
-    # --- Full log history table ---
-    with st.expander("📜 Show Full Log History"):
-        st.dataframe(
-            user_logs[["Timestamp", "Action", "Role"]].sort_values("Timestamp", ascending=False).reset_index(drop=True),
-            use_container_width=True
-        )
+    if st.checkbox("📜 Show Full Log History"):
+        st.dataframe(user_logs[["Action", "Timestamp", "Total Hours Today", "Total Hours This Week"]])
 
-# Footer
-st.markdown("---")
-st.caption("🧠 Built by Suchi | Powered by Streamlit + Google Sheets")
+    st.markdown("---")
+    st.caption("🧠 Built by Suchi | Powered by Streamlit + Google Sheets")
+
+
+
+
+
+
+
+
