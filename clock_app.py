@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import json
-import pytz
-import uuid
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import pytz
 
 # --- Connect to Google Sheets ---
 @st.cache_resource
@@ -21,27 +20,30 @@ def get_gsheet_connection():
 def load_log_df(sheet):
     df = pd.DataFrame(sheet.get_all_records())
     df.columns = df.columns.str.strip()
-    
-    if not df.empty:
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True).dt.tz_convert("America/Chicago")
-        df["Total Hours Today"] = pd.to_numeric(df.get("Total Hours Today", 0), errors="coerce").fillna(0)
-        df["Total Hours This Week"] = pd.to_numeric(df.get("Total Hours This Week", 0), errors="coerce").fillna(0)
 
-    unique_key = f"debug_checkbox_{uuid.uuid4()}"
-    if st.sidebar.checkbox("🔍 Developer Mode", key=unique_key):
-        st.write("🛠 Columns in Sheet:", df.columns.tolist())
-    
+    if st.sidebar.checkbox("🔍 Developer Mode", key=f"debug_checkbox_unique_peoria_{datetime.now().timestamp()}"):
+        st.write("🔍 DEBUG - Columns in Sheet:", df.columns.tolist())
+
+    if not df.empty:
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors='coerce')
+        df = df.dropna(subset=["Timestamp"])
+        if df["Timestamp"].dt.tz is None:
+            df["Timestamp"] = df["Timestamp"].dt.tz_localize("UTC")
+        df["Timestamp"] = df["Timestamp"].dt.tz_convert("America/Chicago")
+
     return df
 
 # --- Calculate total hours for today ---
 def get_today_hours(df, name):
-    today = datetime.now(pytz.timezone("America/Chicago")).date()
+    peoria_tz = pytz.timezone("America/Chicago")
+    today = datetime.now(peoria_tz).date()
     logs = df[(df["Name"] == name) & (df["Timestamp"].dt.date == today)]
     return calculate_total_hours(logs)
 
 # --- Calculate total hours for the week ---
 def get_week_hours(df, name):
-    today = datetime.now(pytz.timezone("America/Chicago"))
+    peoria_tz = pytz.timezone("America/Chicago")
+    today = datetime.now(peoria_tz)
     start_of_week = today - timedelta(days=today.weekday())
     logs = df[(df["Name"] == name) & (df["Timestamp"].dt.date >= start_of_week.date())]
     return calculate_total_hours(logs)
@@ -63,7 +65,9 @@ def log_time_to_sheet(name, role, action):
     sheet = get_gsheet_connection()
     df = load_log_df(sheet)
 
-    now = datetime.now(pytz.timezone("America/Chicago"))
+    peoria_tz = pytz.timezone("America/Chicago")
+    now = datetime.now(peoria_tz)
+
     today_hours = get_today_hours(df, name)
     week_hours = get_week_hours(df, name)
 
@@ -110,10 +114,10 @@ if name:
     st.markdown(f"### 📈 Total Hours This Week: `{week_total}`")
 
     if st.checkbox("📜 Show Full Log History"):
-        st.dataframe(user_logs[["Action", "Timestamp", "Total Hours Today", "Total Hours This Week"]])
+        st.dataframe(user_logs[["Action", "Timestamp"]])
 
-    st.markdown("---")
-    st.caption("🧠 Built by Suchi | Powered by Streamlit + Google Sheets")
+    st.caption("\n\n🧠 Built by Suchi | Powered by Streamlit + Google Sheets")
+
 
 
 
